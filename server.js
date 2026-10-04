@@ -4,11 +4,11 @@ const app = express();
 
 app.use(express.json());
 
-// Bakong API Configuration (ដាក់ Token ពិត និង Account ID របស់អ្នក)
-const BAKONG_TOKEN = 'eyJhbGciOiJIUzI1NiIs...'; 
+// ដាក់ Bakong Token និង Account ID ពិតប្រាកដរបស់អ្នកនៅទីនេះ
+const BAKONG_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7ImlkIjoiYWQ1MzljYzdiMGQ2NDc2YiJ9LCJpYXQiOjE3ODk3NDQzNTAsImV4cCI6MTc5NzUyMDM1MH0.IpXiSeOI-Z_n9E-f6-rocnHPlCyvSKSb1_O-vi9uQVk'; 
 const BAKONG_ACCOUNT_ID = 'samnang_mon@bkrt';
 
-// Database ស្តុក Account ពិតប្រាកដ
+// Database ស្តុក Account សម្រាប់លក់
 let accountStock = {
     'netflix': [
         { id: 1, info: 'Email: netflix1@gmail.com | Pass: 123456' },
@@ -18,9 +18,6 @@ let accountStock = {
         { id: 1, info: 'Email: yt1@gmail.com | Pass: ytpass123' }
     ]
 };
-
-// រក្សាទុកប្រវត្តិនៃការបង្កើត QR សម្រាប់ឆែកមើលទឹកប្រាក់
-let pendingTransactions = {};
 
 app.get('/', (req, res) => {
     res.send(`
@@ -124,7 +121,7 @@ app.get('/', (req, res) => {
     `);
 });
 
-// 1. បង្កើត KHQR ជាមួយ Bakong API
+// 1. បង្កើត KHQR តាមរយៈ Bakong Open API ពិតប្រាកដ
 app.post('/api/create-payment', async (req, res) => {
     const { productId, amount } = req.body;
     
@@ -146,29 +143,24 @@ app.post('/api/create-payment', async (req, res) => {
         });
 
         if (response.data && response.data.responseCode === 0) {
-            const md5 = response.data.data.md5;
-            // រក្សាទុកสถานะថា QR នេះមិនទាន់បង់លុយទេ
-            pendingTransactions[md5] = { productId, paid: false };
-
             res.json({
                 success: true,
                 qrString: response.data.data.qrString,
-                md5: md5
+                md5: response.data.data.md5
             });
         } else {
-            res.status(400).json({ success: false, message: 'បរាជ័យក្នុងការបង្កើត KHQR' });
+            res.status(400).json({ success: false, message: response.data.responseMessage || 'បរាជ័យក្នុងការបង្កើត KHQR' });
         }
     } catch (error) {
-        res.status(500).json({ success: false, message: 'Bakong API Error' });
+        res.status(500).json({ success: false, message: 'Bakong API Connection Error' });
     }
 });
 
-// 2. ពិនិត្យទឹកប្រាក់ចូលពិតប្រាកដពី Bakong
+// 2. ឆែកមើលទឹកប្រាក់ចូលពិតប្រាកដពី Bakong API
 app.post('/api/check-payment', async (req, res) => {
     const { md5, productId } = req.body;
 
     try {
-        // ហៅ Bakong API ដើម្បីឆែកមើល Transaction តាមរយៈ md5
         const checkRes = await axios.post('https://api-bakong.nbc.gov.kh/v1/check_transaction_by_md5', {
             md5: md5
         }, {
@@ -178,12 +170,11 @@ app.post('/api/check-payment', async (req, res) => {
             }
         });
 
-        // បើ Bakong ឆ្លើយតបមកវិញថាមានទឹកប្រាក់ចូលជោគជ័យ (responseCode === 0 គឺមានន័យថាបានបង់ប្រាក់)
+        // បើ responseCode === 0 មានន័យថាអតិថិជនបានបង់ប្រាក់រួចរាល់
         if (checkRes.data && checkRes.data.responseCode === 0) {
-            // ទាញយក Account ពីក្នុងស្តុក
             const stockList = accountStock[productId];
             if (stockList && stockList.length > 0) {
-                const purchasedAccount = stockList.shift(); // កាត់ស្តុកចេញ
+                const purchasedAccount = stockList.shift(); // កាត់ស្តុកចេញពី Database
                 return res.json({
                     success: true,
                     paid: true,
@@ -193,11 +184,9 @@ app.post('/api/check-payment', async (req, res) => {
                 return res.json({ success: false, message: 'លុយចូលហើយ តែទំនិញអស់ស្តុក!' });
             }
         } else {
-            // មិនទាន់មានលុយចូល
             res.json({ success: true, paid: false });
         }
     } catch (error) {
-        // ករណីកំពុងរង់ចាំ ឬ Error ពី API
         res.json({ success: true, paid: false });
     }
 });
